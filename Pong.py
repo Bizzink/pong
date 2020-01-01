@@ -1,6 +1,6 @@
 import pygame as pg
 from sys import exit
-from time import sleep
+from time import sleep, time
 from random import randrange
 from math import pi, cos, sin
 
@@ -8,8 +8,9 @@ from math import pi, cos, sin
 class Paddle:
     def __init__(self, side):
         self.pos = height // 2
-        self.rect = pg.Rect(0, 0, 10, height // 6)
-        self.height = height // 6
+        self.rect = pg.Rect(0, 0, 10, height // 10)
+        self.height = height // 10
+        self.moving = None
 
         if side == "left":
             self.rect.centerx = 20
@@ -29,63 +30,88 @@ class Paddle:
 
     def move(self, direction):
         self.pos += direction
+        self.moving = direction
 
         if self.pos > height - (self.height // 2):
             self.pos = height - (self.height // 2)
+            self.moving = None
 
         if self.pos < self.height // 2:
             self.pos = self.height // 2
+            self.moving = None
 
         self.draw()
 
 
 class Ball:
-    def __init__(self):
-        self.rect = pg.Rect(0, 0, 10, 10)
-        self.x, self.y = 0, 0
-        self.vx, self.vy = 0, 0
+    def __init__(self, debug):
+        self.rect = pg.Rect(0, 0, 20, 20)
+        self.x, self.y = width // 2, height // 2
+        self.rect.center = (self.x, self.y)
+        self.debug = debug
 
-        self.move(width // 2, height // 2)
+        self.v = 0
+
+        self.angle = randrange(360)
+
+        while self.angle % 90 > 70 or self.angle % 90 < 20:
+            self.angle = randrange(360)
+
+        self.angle -= 180
+        self.angle *= (pi / 180)
 
     def __str__(self):
-        return "pos = (" + str(self.x) + "," + str(self.y) + "), vel = (" + str(self.vx) + "," + str(self.vy) + ")"
+        return "pos = (" + str(self.x) + "," + str(self.y) + "), vel = (" + str(self.v) + "," + str(self.angle) + "deg)"
 
     def draw(self):
         pg.draw.ellipse(screen, (255, 255, 255), self.rect)
 
-    def move(self, dx, dy):
-        self.x += dx
-        self.y += dy
+        if self.debug:
+            pg.draw.line(screen, (255, 0, 0), (self.x, self.y), (self.x + cos(self.angle) * 50, self.y + sin(self.angle) * 50))
 
-        self.rect.centerx = int(self.x)
-        self.rect.centery = int(self.y)
+    def move(self, dist):
+        self.x += cos(self.angle) * dist
+        self.y += sin(self.angle) * dist
+
+        self.rect.center = (int(self.x), int(self.y))
 
         self.draw()
 
-    def update(self):
-        global left, right
+    def check_collide(self):
+        global left, right, first_bounce
 
-        #  Ball hits left paddle
-        if self.rect.colliderect(left.rect):
-            self.vx = abs(self.vx)
-        #  Ball hits right paddle
-        if self.rect.colliderect(right.rect):
-            self.vx = abs(self.vx) * -1
+        if self.rect.colliderect(left):
+            self.x = left.rect.right + self.rect.width // 2
+            self.angle += ((pi / 2) - self.angle) * 2
+            first_bounce = False
+
+            if left.moving is not None:
+                if randrange(20) > 10:
+                    self.angle += left.moving * 0.5
+
+        if self.rect.colliderect(right):
+            self.x = right.rect.left - self.rect.width // 2
+            self.angle += ((pi / 2) - self.angle) * 2
+            first_bounce = False
+# TODO: fix this
+            if right.moving is not None:
+                if randrange(20) > 10:
+                    self.angle += right.moving * 0.5
+
         #  Ball hits top
         if self.rect.top < 0:
-            self.vy = abs(self.vy)
+            self.rect.top = 1
+            self.angle -= 2 * self.angle
         #  Ball hits bottom
         if self.rect.bottom > height:
-            self.vy = abs(self.vy) * -1
-        #  Ball leaves sides
-        if self.rect.left > width or self.rect.right < 0:
-            game_over()
-
-        self.move(self.vx, self.vy)
+            self.rect.bottom = height - 1
+            self.angle -= 2 * self.angle
 
 
 class Title:
     def __init__(self, text, x, y, size):
+        self.text, self.rect = None, None
+        self.string = text
         self.pos = (x, y)
         self.font = pg.font.Font("Retro_Gaming.ttf", size)
         self.update(text)
@@ -95,26 +121,31 @@ class Title:
         screen.blit(self.text, self.rect)
 
     def update(self, text):
+        text = str(text)
         self.text = self.font.render(text, True, (200, 200, 200))
         self.rect = self.text.get_rect()
         self.rect.center = self.pos
+
+        self.string = text
 
         self.draw()
 
 
 def init():
     """setup paddles and ball"""
-    global left, right, ball
+    global left, right, ball, first_bounce
     left = Paddle("left")
     right = Paddle("right")
-    ball = Ball()
+    ball = Ball(True)
 
-    angle = randrange(360) * (pi / 180)
+    first_bounce = True
 
-    ball.vy = cos(angle) * speed * 1.5
-    ball.vx = sin(angle) * speed * 1.5
+    Title("Player 1", width // 4, 50, 25)
 
-    Title("test", 50, width // 2, 20)
+    if pc_play:
+        Title("PC", width // 4 * 3, 50, 25)
+    else:
+        Title("Player 2", width // 4 * 3, 50, 25)
 
 
 def game_over():
@@ -128,22 +159,70 @@ def game_over():
 
 def play(paddle):
     """for when computer is playing a paddle"""
+    global ball
     if ball.y > paddle.pos:
-        paddle.move(speed)
+        paddle.move((curr_tick - prev_tick) * speed)
     elif ball.y < paddle.pos:
-        paddle.move(-speed)
+        paddle.move((curr_tick - prev_tick) * -speed)
+
+
+def tick(curr_time, prev_time):
+    """runs calculations based on time since last frame, so movement isn't tied to framerate"""
+    global ball, left, right
+    dist = curr_time - prev_time
+
+    if 119 in pressed_keys:  # W
+        left.move(dist * -speed)
+
+    if 115 in pressed_keys:  # S
+        left.move(dist * speed)
+
+    if 273 in pressed_keys:  # Up arrow
+        right.move(dist * -speed)
+
+    if 274 in pressed_keys:  # Down arrow
+        right.move(dist * speed)
+
+    ball.check_collide()
+
+    if first_bounce:
+        ball.move(dist * speed * 0.9)
+    else:
+        ball.move(dist * speed * 1.25)
+
+    #  Ball leaves sides
+    if ball.rect.left > width:
+        scores[0].update(int(scores[0].string) + 1)
+        game_over()
+
+    elif ball.rect.right < 0:
+        scores[1].update(int(scores[1].string) + 1)
+        game_over()
+
+    left.moving = None
+    right.moving = None
+
+    ball.draw()
+    left.draw()
+    right.draw()
 
 
 width, height = (900, 800)
 left, right, ball = None, None, None
 pressed_keys = []
 titles = []
-speed = 0.2
+speed = 300
+first_bounce = True
+pc_play = True
+
+curr_tick = time()
+prev_tick = 0
 
 pg.init()
 screen = pg.display.set_mode((width, height))
 
 init()
+scores = [Title("0", width // 4, 90, 20), Title("0", width // 4 * 3, 90, 20)]
 
 while True:
     for event in pg.event.get():
@@ -155,32 +234,22 @@ while True:
         if event.type == pg.KEYUP:
             pressed_keys.remove(event.key)
 
-    for key in pressed_keys:
-        #print(key)
-        if key == 119:  # W
-            left.move(-speed)
+    if 27 in pressed_keys:  # Escape
+        game_over()
 
-        if key == 115:  # S
-            left.move(speed)
+    screen.fill((0, 0, 0))
 
-        if key == 273:  # Up arrow
-            right.move(-speed)
-
-        if key == 274:  # Down arrow
-            right.move(speed)
-
-        if key == 27:  # Escape
-            game_over()
+    pg.draw.rect(screen, (150, 150, 150), ((width // 2) - 2, 0, 4, height))
 
     for title in titles:
         title.draw()
 
-    play(right)
+    prev_tick = curr_tick
+    curr_tick = time()
 
-    screen.fill((0, 0, 0))
-    left.draw()
-    right.draw()
+    tick(curr_tick, prev_tick)
 
-    ball.update()
+    if pc_play:
+        play(right)
 
     pg.display.flip()
